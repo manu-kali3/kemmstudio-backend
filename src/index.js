@@ -8,7 +8,6 @@ async function startHeartbeatSweeper() {
   const sweep = async () => {
     try {
       const cutoff = new Date(Date.now() - env.heartbeatTimeoutMs);
-      // in-memory store supports simple matching; for expired heartbeat we handle in model logic via scan
       const all = await Session.find({ valid: true });
       for (const s of all) {
         if (new Date(s.lastHeartbeat).getTime() < cutoff.getTime()) {
@@ -23,11 +22,21 @@ async function startHeartbeatSweeper() {
   setInterval(sweep, 30000);
 }
 
+let initPromise;
+export async function ensureReady() {
+  if (!initPromise) {
+    initPromise = (async () => {
+      await connectPostgres();
+      await initRateLimiters();
+    })();
+  }
+  return initPromise;
+}
+
 async function start() {
   try {
-    await connectPostgres();
-    await initRateLimiters();
-    await startHeartbeatSweeper();
+    await ensureReady();
+    if (process.env.VERCEL !== '1') await startHeartbeatSweeper();
     app.listen(env.port, () => {
       console.log(`[server] listening on http://localhost:${env.port}`);
     });
@@ -37,4 +46,8 @@ async function start() {
   }
 }
 
-start();
+if (process.env.VERCEL !== '1') {
+  start();
+}
+
+export default app;
