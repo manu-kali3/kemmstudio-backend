@@ -36,6 +36,9 @@ const fieldMap = {
 const revFieldMap = Object.fromEntries(Object.entries(fieldMap).map(([k,v]) => [v,k]));
 
 function toDb(key) { return fieldMap[key] || key.replace(/[A-Z]/g, m => '_' + m.toLowerCase()); }
+function sanitize(obj = {}) {
+  return Object.fromEntries(Object.entries(obj).filter(([k, v]) => k !== 'save' && typeof v !== 'function'));
+}
 function fromDbRow(row) {
   if (!row) return null;
   const out = {};
@@ -73,7 +76,7 @@ function makePgCollection(name) {
   const table = tableMap[name];
   const col = {
     async create(data) {
-      const doc = { _id: newId(), createdAt: now(), updatedAt: now(), ...data };
+      const doc = { _id: newId(), createdAt: now(), updatedAt: now(), ...sanitize(data) };
       const keys = Object.keys(doc);
       const cols = keys.map(toDb);
       const vals = keys.map(k => doc[k]);
@@ -130,7 +133,7 @@ function makePgCollection(name) {
       return chain;
     },
     async findByIdAndUpdate(idVal, data) {
-      const patch = { ...data, updatedAt: now() };
+      const patch = { ...sanitize(data), updatedAt: now() };
       delete patch._id; delete patch.id; delete patch.createdAt; delete patch.created_at;
       const keys = Object.keys(patch);
       if (!keys.length) return col.findById(idVal);
@@ -150,16 +153,16 @@ function makePgCollection(name) {
       return { deletedCount: res.rowCount };
     },
     async updateMany(filter = {}, update = {}) {
-      const set = { ...(update.$set || update), updatedAt: now() };
+      const set = { ...sanitize(update.$set || update), updatedAt: now() };
       const setKeys = Object.keys(set);
-      const { clause, values, next } = buildWhere(filter, 1);
+      const { clause, values } = buildWhere(filter, 1);
       const sets = setKeys.map((k,i)=>`${toDb(k)} = $${i+1}`);
       const setVals = setKeys.map(k=>set[k]);
       const res = await pgPool.query(`UPDATE ${table} SET ${sets.join(', ')} ${clause.replace(/\$(\d+)/g, (_,n)=>`$${Number(n)+setVals.length}`)}`, [...setVals, ...values]);
       return { modifiedCount: res.rowCount };
     },
     async updateOne(filter = {}, update = {}, opts = {}) {
-      const set = { ...(update.$set || update), updatedAt: now() };
+      const set = { ...sanitize(update.$set || update), updatedAt: now() };
       const { clause, values } = buildWhere(filter);
       const existing = await pgPool.query(`SELECT id FROM ${table} ${clause} LIMIT 1`, values);
       if (existing.rows[0]) {
@@ -167,7 +170,7 @@ function makePgCollection(name) {
         return { modifiedCount: 1 };
       }
       if (opts.upsert) {
-        await col.create({ ...filter, ...set });
+        await col.create({ ...sanitize(filter), ...set });
         return { upsertedCount: 1 };
       }
       return { modifiedCount: 0 };
